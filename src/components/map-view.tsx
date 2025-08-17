@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle } from "react-leaflet";
 import L, { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -20,23 +20,38 @@ export function MapView({
 }) {
   const [mapCenter] = useState<LatLngExpression>([51.505, -0.09]);
 
-  // ✅ Route circle calculation (safe)
+  // ✅ Filter invalid route points
+  const validRoute = (route || []).filter(
+    (p: any) => Array.isArray(p) ? !isNaN(p[0]) && !isNaN(p[1]) : p?.lat !== undefined && p?.lng !== undefined
+  ) as LatLngExpression[];
+
+  // ✅ Compute circle only if we have valid route
   let routeCircle: { center: LatLngExpression; radius: number } | null = null;
-  if (route && route.length > 1) {
-    const routeBounds = L.latLngBounds(route as L.LatLngExpression[]);
+  if (validRoute.length > 1) {
+    const routeBounds = L.latLngBounds(validRoute as L.LatLngExpression[]);
     const center = routeBounds.getCenter();
     const radius = center.distanceTo(routeBounds.getNorthEast());
     routeCircle = { center, radius };
-  } else if (route && route.length === 1) {
-    routeCircle = { center: route[0], radius: 5000 }; // fallback circle
+  } else if (validRoute.length === 1) {
+    routeCircle = { center: validRoute[0], radius: 5000 }; // fallback
   }
+
+  // ✅ Filter invalid complaints
+  const validComplaints = complaints.filter(
+    (c) =>
+      c.location &&
+      typeof c.location.lat === "number" &&
+      typeof c.location.lng === "number" &&
+      !isNaN(c.location.lat) &&
+      !isNaN(c.location.lng)
+  );
 
   return (
     <MapContainer
       center={mapCenter}
       zoom={13}
       scrollWheelZoom={true}
-      className="h-[500px] w-full rounded-lg z-0" // ✅ no id="map"
+      className="h-[500px] w-full rounded-lg z-0"
     >
       {/* Base map */}
       <TileLayer
@@ -45,8 +60,8 @@ export function MapView({
       />
 
       {/* Route polyline */}
-      {route && route.length > 0 && (
-        <Polyline positions={route} pathOptions={{ color: "red" }} />
+      {validRoute.length > 0 && (
+        <Polyline positions={validRoute} pathOptions={{ color: "red" }} />
       )}
 
       {/* Route coverage circle */}
@@ -59,7 +74,7 @@ export function MapView({
       )}
 
       {/* Complaint markers */}
-      {complaints.map((complaint) => (
+      {validComplaints.map((complaint) => (
         <Marker
           key={complaint.id}
           position={[complaint.location.lat, complaint.location.lng]}
