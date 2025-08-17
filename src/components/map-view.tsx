@@ -1,15 +1,153 @@
 "use client";
 
-import { useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle } from "react-leaflet";
+import { useEffect, useState } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMap,
+  Circle,
+  Polyline,
+} from "react-leaflet";
 import L, { LatLngExpression } from "leaflet";
-import "leaflet/dist/leaflet.css";
+import Image from "next/image";
 
-interface Complaint {
+import { PotholeIcon } from "@/components/icons/pothole-icon";
+import { Trash2, LightbulbOff, TreeDeciduous } from "lucide-react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+type IssueType = "pothole" | "garbage" | "streetlight" | "fallen_tree" | "other";
+type Status = "pending" | "in progress" | "resolved";
+
+type Complaint = {
   id: string;
-  location: { lat: number; lng: number };
-  description: string;
-}
+  issueType: IssueType;
+  location: string;
+  severity: "high" | "medium" | "low";
+  imageUrl: string;
+  status: Status;
+};
+
+const getIconHtml = (issueType: IssueType) => {
+  const commonStyle: React.CSSProperties = {
+    width: "24px",
+    height: "24px",
+    color: "white",
+  };
+  let icon;
+  switch (issueType) {
+    case "pothole":
+      icon = <PotholeIcon style={commonStyle} />;
+      break;
+    case "garbage":
+      icon = <Trash2 style={commonStyle} />;
+      break;
+    case "streetlight":
+      icon = <LightbulbOff style={commonStyle} />;
+      break;
+    case "fallen_tree":
+      icon = <TreeDeciduous style={commonStyle} />;
+      break;
+    default:
+      icon = (
+        <div
+          style={{
+            ...commonStyle,
+            fontSize: "18px",
+            textAlign: "center",
+          }}
+        >
+          ?
+        </div>
+      );
+  }
+  return renderToStaticMarkup(icon);
+};
+
+const getIconColor = (severity: "high" | "medium" | "low") => {
+  switch (severity) {
+    case "high":
+      return "#ef4444"; // red
+    case "medium":
+      return "#f97316"; // orange
+    default:
+      return "#3b82f6"; // blue
+  }
+};
+
+const createComplaintIcon = (
+  issueType: IssueType,
+  severity: "high" | "medium" | "low"
+) => {
+  const iconHtml = `
+    <div style="
+      background-color: ${getIconColor(severity)};
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border: 2px solid white;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    ">
+      ${getIconHtml(issueType)}
+    </div>
+  `;
+  return L.divIcon({
+    html: iconHtml,
+    className: "",
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+    popupAnchor: [0, -16],
+  });
+};
+
+// ✅ Safely fit bounds
+const MapUpdater = ({
+  complaints,
+  route,
+}: {
+  complaints: Complaint[];
+  route: LatLngExpression[];
+}) => {
+  const map = useMap();
+  useEffect(() => {
+    const validComplaintPoints = complaints
+      .map((c) => {
+        const parts = c.location.split(",").map((p) => p.trim());
+        if (
+          parts.length !== 2 ||
+          isNaN(parseFloat(parts[0])) ||
+          isNaN(parseFloat(parts[1]))
+        ) {
+          return null;
+        }
+        return [parseFloat(parts[0]), parseFloat(parts[1])] as LatLngExpression;
+      })
+      .filter(Boolean) as LatLngExpression[];
+
+    const validRoute = route.filter(
+      (p) =>
+        Array.isArray(p) &&
+        p.length === 2 &&
+        !isNaN(Number(p[0])) &&
+        !isNaN(Number(p[1]))
+    ) as LatLngExpression[];
+
+    const allPoints = [...validComplaintPoints, ...validRoute];
+
+    if (allPoints.length > 0) {
+      const bounds = L.latLngBounds(allPoints);
+      map.fitBounds(bounds, { padding: [50, 50] });
+    } else {
+      map.setView([51.505, -0.09], 5);
+    }
+  }, [complaints, route, map]);
+
+  return null;
+};
 
 export function MapView({
   complaints,
@@ -20,51 +158,39 @@ export function MapView({
 }) {
   const [mapCenter] = useState<LatLngExpression>([51.505, -0.09]);
 
-  // ✅ Filter invalid route points
-  const validRoute = (route || []).filter(
-    (p: any) => Array.isArray(p) ? !isNaN(p[0]) && !isNaN(p[1]) : p?.lat !== undefined && p?.lng !== undefined
-  ) as LatLngExpression[];
+  // ✅ Prevent container reuse on hot reload / tab switch
+  useEffect(() => {
+    const container = L.DomUtil.get("map");
+    if (container != null) {
+      (container as any)._leaflet_id = null;
+    }
+  }, []);
 
-  // ✅ Compute circle only if we have valid route
+  // ✅ Circle around route
   let routeCircle: { center: LatLngExpression; radius: number } | null = null;
-  if (validRoute.length > 1) {
-    const routeBounds = L.latLngBounds(validRoute as L.LatLngExpression[]);
+  if (route.length > 1) {
+    const routeBounds = L.latLngBounds(route as LatLngExpression[]);
     const center = routeBounds.getCenter();
     const radius = center.distanceTo(routeBounds.getNorthEast());
     routeCircle = { center, radius };
-  } else if (validRoute.length === 1) {
-    routeCircle = { center: validRoute[0], radius: 5000 }; // fallback
+  } else if (route.length === 1) {
+    routeCircle = { center: route[0], radius: 5000 };
   }
-
-  // ✅ Filter invalid complaints
-  const validComplaints = complaints.filter(
-    (c) =>
-      c.location &&
-      typeof c.location.lat === "number" &&
-      typeof c.location.lng === "number" &&
-      !isNaN(c.location.lat) &&
-      !isNaN(c.location.lng)
-  );
 
   return (
     <MapContainer
+      id="map"
       center={mapCenter}
       zoom={13}
       scrollWheelZoom={true}
       className="h-[500px] w-full rounded-lg z-0"
     >
-      {/* Base map */}
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <MapUpdater complaints={complaints} route={route} />
 
-      {/* Route polyline */}
-      {validRoute.length > 0 && (
-        <Polyline positions={validRoute} pathOptions={{ color: "red" }} />
-      )}
-
-      {/* Route coverage circle */}
       {routeCircle && (
         <Circle
           center={routeCircle.center}
@@ -73,20 +199,54 @@ export function MapView({
         />
       )}
 
-      {/* Complaint markers */}
-      {validComplaints.map((complaint) => (
-        <Marker
-          key={complaint.id}
-          position={[complaint.location.lat, complaint.location.lng]}
-        >
-          <Popup>
-            <div>
-              <strong>Complaint:</strong>
-              <p>{complaint.description}</p>
-            </div>
-          </Popup>
-        </Marker>
-      ))}
+      {route.length > 1 && (
+        <Polyline positions={route} pathOptions={{ color: "green" }} />
+      )}
+
+      {complaints.map((complaint) => {
+        const parts = complaint.location.split(",").map((p) => p.trim());
+        if (parts.length !== 2) return null;
+
+        const lat = parseFloat(parts[0]);
+        const lng = parseFloat(parts[1]);
+        if (isNaN(lat) || isNaN(lng)) return null;
+
+        const position: LatLngExpression = [lat, lng];
+
+        return (
+          <Marker
+            key={complaint.id}
+            position={position}
+            icon={createComplaintIcon(complaint.issueType, complaint.severity)}
+          >
+            <Popup>
+              <div className="w-48">
+                <h4 className="font-bold capitalize text-base mb-2">
+                  {complaint.issueType.replace(/_/g, " ")}
+                </h4>
+                <Image
+                  src={complaint.imageUrl}
+                  alt={complaint.issueType}
+                  width={192}
+                  height={128}
+                  className="rounded-md object-cover mb-2"
+                />
+                <p>
+                  <strong>Severity:</strong>{" "}
+                  <span className="capitalize">{complaint.severity}</span>
+                </p>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  <span className="capitalize">{complaint.status}</span>
+                </p>
+                <p>
+                  <strong>Location:</strong> {complaint.location}
+                </p>
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 }
