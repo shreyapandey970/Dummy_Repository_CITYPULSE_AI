@@ -13,7 +13,7 @@ import L, { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Complaint } from "@/types/complaint";
 
-// ✅ Fix default marker icons (important in Next.js build)
+// ✅ Fix default marker icons (needed in Next.js build)
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -24,7 +24,7 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// ✅ Helper component for panning map
+// ✅ Helper component to update view
 function MapUpdater({ center }: { center: LatLngExpression }) {
   const map = useMap();
   useEffect(() => {
@@ -42,14 +42,15 @@ export function MapView({
 }) {
   const [mapCenter] = useState<LatLngExpression>([51.505, -0.09]);
 
-  // ✅ Cleanup fix for "Map container already initialized"
+  // ✅ Cleanup fix for production
   useEffect(() => {
     return () => {
-      const container = L.DomUtil.get("map");
-      if (container != null) {
+      // Destroy any Leaflet map bound to this container
+      const container = document.querySelector(
+        ".leaflet-container"
+      ) as any;
+      if (container && container._leaflet_id) {
         try {
-          // reset leaflet internal id so next mount is fresh
-          // @ts-ignore
           container._leaflet_id = null;
         } catch (e) {
           console.warn("Leaflet cleanup failed:", e);
@@ -60,7 +61,6 @@ export function MapView({
 
   return (
     <MapContainer
-      id="map"
       center={mapCenter}
       zoom={13}
       scrollWheelZoom={true}
@@ -73,7 +73,7 @@ export function MapView({
 
       <MapUpdater center={mapCenter} />
 
-      {/* Complaints Markers */}
+      {/* Complaint markers */}
       {complaints.map((complaint, idx) => (
         <Marker
           key={idx}
@@ -83,18 +83,14 @@ export function MapView({
           ] as LatLngExpression}
         >
           <Popup>
-            <div>
-              <h3 className="font-bold">{complaint.title}</h3>
-              <p>{complaint.description}</p>
-            </div>
+            <h3 className="font-bold">{complaint.title}</h3>
+            <p>{complaint.description}</p>
           </Popup>
         </Marker>
       ))}
 
-      {/* Route Polyline */}
-      {route.length > 0 && (
-        <Polyline positions={route} color="blue" />
-      )}
+      {/* Route polyline */}
+      {route.length > 0 && <Polyline positions={route} color="blue" />}
     </MapContainer>
   );
 }
