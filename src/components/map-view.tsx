@@ -6,132 +6,32 @@ import {
   TileLayer,
   Marker,
   Popup,
+  Polyline,
   useMap,
-  Circle,
 } from "react-leaflet";
 import L, { LatLngExpression } from "leaflet";
-import Image from "next/image";
+import "leaflet/dist/leaflet.css";
+import { Complaint } from "@/types/complaint";
 
-import { PotholeIcon } from "@/components/icons/pothole-icon";
-import { Trash2, LightbulbOff, TreeDeciduous } from "lucide-react";
-import { renderToStaticMarkup } from "react-dom/server";
+// ✅ Fix default marker icons (important in Next.js build)
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+  iconUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+  shadowUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+});
 
-type IssueType = "pothole" | "garbage" | "streetlight" | "fallen_tree" | "other";
-type Status = "pending" | "in progress" | "resolved";
-
-type Complaint = {
-  id: string;
-  issueType: IssueType;
-  location: string;
-  severity: "high" | "medium" | "low";
-  imageUrl: string;
-  status: Status;
-};
-
-const getIconHtml = (issueType: IssueType) => {
-  const commonStyle: React.CSSProperties = {
-    width: "24px",
-    height: "24px",
-    color: "white",
-  };
-  let icon;
-  switch (issueType) {
-    case "pothole":
-      icon = <PotholeIcon style={commonStyle} />;
-      break;
-    case "garbage":
-      icon = <Trash2 style={commonStyle} />;
-      break;
-    case "streetlight":
-      icon = <LightbulbOff style={commonStyle} />;
-      break;
-    case "fallen_tree":
-      icon = <TreeDeciduous style={commonStyle} />;
-      break;
-    default:
-      icon = (
-        <div style={{ ...commonStyle, fontSize: "18px", textAlign: "center" }}>
-          ?
-        </div>
-      );
-  }
-  return renderToStaticMarkup(icon);
-};
-
-const getIconColor = (severity: "high" | "medium" | "low") => {
-  switch (severity) {
-    case "high":
-      return "#ef4444"; // red-500
-    case "medium":
-      return "#f97316"; // orange-500
-    default:
-      return "#3b82f6"; // blue-500
-  }
-};
-
-const createComplaintIcon = (
-  issueType: IssueType,
-  severity: "high" | "medium" | "low"
-) => {
-  const iconHtml = `
-    <div style="
-      background-color: ${getIconColor(severity)};
-      border-radius: 50%;
-      width: 32px;
-      height: 32px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      border: 2px solid white;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-    ">
-      ${getIconHtml(issueType)}
-    </div>
-  `;
-  return L.divIcon({
-    html: iconHtml,
-    className: "",
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -16],
-  });
-};
-
-const MapUpdater = ({
-  complaints,
-  route,
-}: {
-  complaints: Complaint[];
-  route: LatLngExpression[];
-}) => {
+// ✅ Helper component for panning map
+function MapUpdater({ center }: { center: LatLngExpression }) {
   const map = useMap();
   useEffect(() => {
-    const validComplaintPoints = complaints
-      .map((c) => {
-        const parts = c.location.split(",").map((p) => p.trim());
-        if (
-          parts.length !== 2 ||
-          isNaN(parseFloat(parts[0])) ||
-          isNaN(parseFloat(parts[1]))
-        ) {
-          return null;
-        }
-        const [lat, lng] = parts.map((p) => parseFloat(p.trim()));
-        return [lat, lng] as LatLngExpression;
-      })
-      .filter(Boolean) as LatLngExpression[];
-
-    const allPoints = [...validComplaintPoints, ...route];
-
-    if (allPoints.length > 0) {
-      const bounds = L.latLngBounds(allPoints);
-      map.fitBounds(bounds, { padding: [50, 50] });
-    } else {
-      map.setView([51.505, -0.09], 5);
-    }
-  }, [complaints, route, map]);
+    map.setView(center);
+  }, [center, map]);
   return null;
-};
+}
 
 export function MapView({
   complaints,
@@ -142,24 +42,21 @@ export function MapView({
 }) {
   const [mapCenter] = useState<LatLngExpression>([51.505, -0.09]);
 
-  // 🔹 Prevent "Map container reused" error by resetting Leaflet DOM container
+  // ✅ Cleanup fix for "Map container already initialized"
   useEffect(() => {
-    const container = L.DomUtil.get("map");
-    if (container != null) {
-      // @ts-ignore
-      container._leaflet_id = null;
-    }
+    return () => {
+      const container = L.DomUtil.get("map");
+      if (container != null) {
+        try {
+          // reset leaflet internal id so next mount is fresh
+          // @ts-ignore
+          container._leaflet_id = null;
+        } catch (e) {
+          console.warn("Leaflet cleanup failed:", e);
+        }
+      }
+    };
   }, []);
-
-  let routeCircle: { center: LatLngExpression; radius: number } | null = null;
-  if (route.length > 1) {
-    const routeBounds = L.latLngBounds(route);
-    const center = routeBounds.getCenter();
-    const radius = center.distanceTo(routeBounds.getNorthEast());
-    routeCircle = { center, radius };
-  } else if (route.length === 1) {
-    routeCircle = { center: route[0], radius: 5000 };
-  }
 
   return (
     <MapContainer
@@ -170,62 +67,34 @@ export function MapView({
       className="h-[500px] w-full rounded-lg z-0"
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <MapUpdater complaints={complaints} route={route} />
-      {routeCircle && (
-        <Circle
-          center={routeCircle.center}
-          radius={routeCircle.radius}
-          pathOptions={{ color: "blue", fillColor: "blue", fillOpacity: 0.1 }}
-        />
+
+      <MapUpdater center={mapCenter} />
+
+      {/* Complaints Markers */}
+      {complaints.map((complaint, idx) => (
+        <Marker
+          key={idx}
+          position={[
+            complaint.location.lat,
+            complaint.location.lng,
+          ] as LatLngExpression}
+        >
+          <Popup>
+            <div>
+              <h3 className="font-bold">{complaint.title}</h3>
+              <p>{complaint.description}</p>
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {/* Route Polyline */}
+      {route.length > 0 && (
+        <Polyline positions={route} color="blue" />
       )}
-      {complaints.map((complaint) => {
-        const parts = complaint.location.split(",").map((p) => p.trim());
-        if (parts.length !== 2) return null;
-
-        const lat = parseFloat(parts[0]);
-        const lng = parseFloat(parts[1]);
-
-        if (isNaN(lat) || isNaN(lng)) return null;
-
-        const position: LatLngExpression = [lat, lng];
-
-        return (
-          <Marker
-            key={complaint.id}
-            position={position}
-            icon={createComplaintIcon(complaint.issueType, complaint.severity)}
-          >
-            <Popup>
-              <div className="w-48">
-                <h4 className="font-bold capitalize text-base mb-2">
-                  {complaint.issueType.replace(/_/g, " ")}
-                </h4>
-                <Image
-                  src={complaint.imageUrl}
-                  alt={complaint.issueType}
-                  width={192}
-                  height={128}
-                  className="rounded-md object-cover mb-2"
-                />
-                <p>
-                  <strong>Severity:</strong>{" "}
-                  <span className="capitalize">{complaint.severity}</span>
-                </p>
-                <p>
-                  <strong>Status:</strong>{" "}
-                  <span className="capitalize">{complaint.status}</span>
-                </p>
-                <p>
-                  <strong>Location:</strong> {complaint.location}
-                </p>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
     </MapContainer>
   );
 }
