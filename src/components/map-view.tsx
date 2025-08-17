@@ -13,7 +13,7 @@ import L, { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Complaint } from "@/types/complaint";
 
-// ✅ Fix default marker icons (needed in Next.js build)
+// ✅ Fix default marker icons
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -24,7 +24,6 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// ✅ Helper component to update view
 function MapUpdater({ center }: { center: LatLngExpression }) {
   const map = useMap();
   useEffect(() => {
@@ -42,19 +41,14 @@ export function MapView({
 }) {
   const [mapCenter] = useState<LatLngExpression>([51.505, -0.09]);
 
-  // ✅ Cleanup fix for production
+  // ✅ Cleanup
   useEffect(() => {
     return () => {
-      // Destroy any Leaflet map bound to this container
       const container = document.querySelector(
         ".leaflet-container"
       ) as any;
       if (container && container._leaflet_id) {
-        try {
-          container._leaflet_id = null;
-        } catch (e) {
-          console.warn("Leaflet cleanup failed:", e);
-        }
+        container._leaflet_id = null;
       }
     };
   }, []);
@@ -73,24 +67,44 @@ export function MapView({
 
       <MapUpdater center={mapCenter} />
 
-      {/* Complaint markers */}
-      {complaints.map((complaint, idx) => (
-        <Marker
-          key={idx}
-          position={[
-            complaint.location.lat,
-            complaint.location.lng,
-          ] as LatLngExpression}
-        >
-          <Popup>
-            <h3 className="font-bold">{complaint.title}</h3>
-            <p>{complaint.description}</p>
-          </Popup>
-        </Marker>
-      ))}
+      {/* ✅ Only render markers with valid lat/lng */}
+      {complaints.map((complaint, idx) => {
+        if (
+          !complaint.location ||
+          complaint.location.lat == null ||
+          complaint.location.lng == null
+        ) {
+          console.warn("Skipping invalid complaint:", complaint);
+          return null;
+        }
+        return (
+          <Marker
+            key={idx}
+            position={[
+              complaint.location.lat,
+              complaint.location.lng,
+            ] as LatLngExpression}
+          >
+            <Popup>
+              <h3 className="font-bold">{complaint.title}</h3>
+              <p>{complaint.description}</p>
+            </Popup>
+          </Marker>
+        );
+      })}
 
-      {/* Route polyline */}
-      {route.length > 0 && <Polyline positions={route} color="blue" />}
+      {/* ✅ Only render polyline if all points are valid */}
+      {route.length > 0 && (
+        <Polyline
+          positions={route.filter(
+            (pt) =>
+              Array.isArray(pt) &&
+              pt[0] !== undefined &&
+              pt[1] !== undefined
+          )}
+          color="blue"
+        />
+      )}
     </MapContainer>
   );
 }
